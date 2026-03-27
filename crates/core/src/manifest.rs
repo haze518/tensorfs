@@ -51,8 +51,7 @@ impl Manifest {
     pub fn load(path: &Path) -> Result<Self, error::TensorFsError> {
         let data = read(path)?;
 
-        let s = str::from_utf8(&data).map_err(|_| error::TensorFsError::ManifestReadError)?;
-        let manifest: Manifest = serde_json::from_str(s).map_err(|_| error::TensorFsError::ManifestReadError)?;
+        let manifest: Manifest = serde_json::from_slice(&data).map_err(|_| error::TensorFsError::ManifestReadError)?;
 
         Ok(manifest)
     }
