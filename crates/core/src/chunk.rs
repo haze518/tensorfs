@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ChunkId([u8; 32]);
 
@@ -24,5 +27,35 @@ impl ChunkId {
 impl std::fmt::Display for ChunkId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:#?}", self.as_bytes())
+    }
+}
+
+impl Serialize for ChunkId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+        
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for ChunkId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        
+        let s = String::deserialize(deserializer)?;
+
+        let bytes = hex::decode(&s)
+            .map_err(|_| D::Error::custom("invalid hex"))?;
+
+        if bytes.len() != 32 {
+            return Err(D::Error::custom("invalid length for ChunkId"));
+        }
+
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+
+        Ok(ChunkId::from_bytes(arr))
     }
 }

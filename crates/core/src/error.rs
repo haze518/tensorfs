@@ -18,4 +18,6 @@ pub enum TensorFsError {
     ChunkNotFound(chunk::ChunkId),
     #[error("Invalid argument")]
     InvalidArgument,
+    #[error("Manifest read error")]
+    ManifestReadError,
 }
