@@ -1,15 +1,19 @@
+use std::io::SeekFrom;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
 use tensorfs::error;
 use tensorfs::types;
 use tokio::fs::{OpenOptions, create_dir_all, read, try_exists, remove_file, rename};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub trait Cas: Send + Sync {
-    fn put(&self, bytes: bytes::Bytes) -> impl Future<Output = Result<types::ChunkId, error::TensorFsError>>;
-    fn get(&self, id: types::ChunkId) -> impl Future<Output = Result<bytes::Bytes, error::TensorFsError>> + Send;
-    fn exists(&self, id: types::ChunkId) -> impl Future<Output = Result<bool, error::TensorFsError>>;
+    fn put(&self, bytes: Bytes) -> impl Future<Output = Result<types::ChunkId, error::TensorFsError>> + Send;
+    fn get(&self, id: types::ChunkId) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
+    fn exists(&self, id: types::ChunkId) -> impl Future<Output = Result<bool, error::TensorFsError>> + Send;
+    fn read_range(&self, id: types::ChunkId, offset: u64, len: usize) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
 }
 
 pub struct FsCas {
@@ -17,7 +21,7 @@ pub struct FsCas {
 }
 
 impl Cas for FsCas {
-    async fn put(&self, bytes: bytes::Bytes) -> Result<types::ChunkId, error::TensorFsError> {
+    async fn put(&self, bytes: Bytes) -> Result<types::ChunkId, error::TensorFsError> {
         let hash = blake3::hash(&bytes);
         let id = types::ChunkId::from_bytes(*hash.as_bytes());
 
@@ -70,16 +74,35 @@ impl Cas for FsCas {
         }
     }
 
-    async fn get(&self, id: types::ChunkId) -> Result<bytes::Bytes, error::TensorFsError> {
+    async fn get(&self, id: types::ChunkId) -> Result<Bytes, error::TensorFsError> {
         let path = std::path::Path::new(&self.path).join(id.to_hex());
         let file = read(path).await?;
-        Ok(bytes::Bytes::from(file))
+        Ok(Bytes::from(file))
     }
 
     async fn exists(&self, id: types::ChunkId) -> Result<bool, error::TensorFsError> {
         let path = std::path::Path::new(&self.path).join(id.to_hex());
         let exists = try_exists(path).await?;
         Ok(exists)
+    }
+
+    async fn read_range(&self, id: types::ChunkId, offset: u64, len: usize) -> Result<Bytes, error::TensorFsError> {
+        if len == 0 {
+            return Ok(Bytes::new());
+        }
+
+        let path = std::path::Path::new(&self.path).join(id.to_hex());
+
+        let mut f = OpenOptions::new().read(true).open(path).await?;
+
+        f.seek(SeekFrom::Start(offset)).await?;
+
+        let mut buffer = vec![0u8; len];
+        let got = f.read(&mut buffer).await?;
+
+        buffer.truncate(got);
+
+        Ok(Bytes::from(buffer))
     }
 }
 
@@ -113,6 +136,7 @@ impl Default for FsCas {
 #[cfg(test)]
 mod tests {
     use super::{Cas, FsCas};
+    use bytes::Bytes;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -132,7 +156,7 @@ mod tests {
     async fn put_then_get_returns_same_bytes() {
         let dir = test_dir("put-get");
         let cas = FsCas::new(dir.clone());
-        let expected = bytes::Bytes::from_static(b"hello cas");
+        let expected = Bytes::from_static(b"hello cas");
 
         let id = cas.put(expected.clone()).await.unwrap();
         let actual = cas.get(id).await.unwrap();
@@ -150,7 +174,7 @@ mod tests {
         let missing_id = tensorfs::types::ChunkId::from_bytes(*blake3::hash(b"missing").as_bytes());
         assert!(!cas.exists(missing_id).await.unwrap());
 
-        let id = cas.put(bytes::Bytes::from_static(b"present")).await.unwrap();
+        let id = cas.put(Bytes::from_static(b"present")).await.unwrap();
         assert!(cas.exists(id).await.unwrap());
 
         let _ = tokio::fs::remove_dir_all(dir).await;
@@ -160,7 +184,7 @@ mod tests {
     async fn put_does_not_create_duplicate_files_for_same_bytes() {
         let dir = test_dir("dedupe");
         let cas = FsCas::new(dir.clone());
-        let bytes = bytes::Bytes::from_static(b"same bytes");
+        let bytes = Bytes::from_static(b"same bytes");
 
         let first_id = cas.put(bytes.clone()).await.unwrap();
         let first_hex = first_id.to_hex();
@@ -177,6 +201,75 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].file_name().to_string_lossy(), first_hex);
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_range_reads_middle_of_chunk() {
+        let dir = test_dir("read-range-middle");
+        let cas = FsCas::new(dir.clone());
+
+        let id = cas.put(Bytes::from_static(b"hello world")).await.unwrap();
+        let actual = cas.read_range(id, 6, 5).await.unwrap();
+
+        assert_eq!(actual, Bytes::from_static(b"world"));
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_range_returns_empty_when_offset_equals_size() {
+        let dir = test_dir("read-range-offset-eq-size");
+        let cas = FsCas::new(dir.clone());
+
+        let content = Bytes::from_static(b"abcdef");
+        let id = cas.put(content.clone()).await.unwrap();
+
+        let actual = cas.read_range(id, content.len() as u64, 10).await.unwrap();
+
+        assert!(actual.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_range_returns_empty_when_offset_is_past_end() {
+        let dir = test_dir("read-range-offset-past-end");
+        let cas = FsCas::new(dir.clone());
+
+        let id = cas.put(Bytes::from_static(b"abcdef")).await.unwrap();
+        let actual = cas.read_range(id, 100, 10).await.unwrap();
+
+        assert!(actual.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_range_truncates_when_len_goes_past_end() {
+        let dir = test_dir("read-range-truncate");
+        let cas = FsCas::new(dir.clone());
+
+        let id = cas.put(Bytes::from_static(b"abcdef")).await.unwrap();
+        let actual = cas.read_range(id, 4, 10).await.unwrap();
+
+        assert_eq!(actual, Bytes::from_static(b"ef"));
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_range_reads_entire_chunk_when_requested() {
+        let dir = test_dir("read-range-full");
+        let cas = FsCas::new(dir.clone());
+
+        let expected = Bytes::from_static(b"full chunk");
+        let id = cas.put(expected.clone()).await.unwrap();
+
+        let actual = cas.read_range(id, 0, expected.len()).await.unwrap();
+
+        assert_eq!(actual, expected);
 
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

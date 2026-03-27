@@ -2,6 +2,8 @@ use std::io;
 
 use thiserror::Error;
 
+use crate::types;
+
 pub type Result<T> = std::result::Result<T, TensorFsError>;
 
 #[derive(Error, Debug)]
@@ -12,4 +14,8 @@ pub enum TensorFsError {
     InvalidHex,
     #[error("Invalid chunk_id length")]
     InvalidChunkIdLength,
+    #[error("No chunk with id: {0}")]
+    ChunkNotFound(types::ChunkId),
+    #[error("Invalid argument")]
+    InvalidArgument,
 }

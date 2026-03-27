@@ -20,3 +20,9 @@ impl ChunkId {
         &self.0
     }
 }
+
+impl std::fmt::Display for ChunkId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self.as_bytes())
+    }
+}
