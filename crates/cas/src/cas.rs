@@ -5,15 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use tensorfs::error;
-use tensorfs::types;
+use tensorfs::chunk;
 use tokio::fs::{OpenOptions, create_dir_all, read, try_exists, remove_file, rename};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub trait Cas: Send + Sync {
-    fn put(&self, bytes: Bytes) -> impl Future<Output = Result<types::ChunkId, error::TensorFsError>> + Send;
-    fn get(&self, id: types::ChunkId) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
-    fn exists(&self, id: types::ChunkId) -> impl Future<Output = Result<bool, error::TensorFsError>> + Send;
-    fn read_range(&self, id: types::ChunkId, offset: u64, len: usize) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
+    fn put(&self, bytes: Bytes) -> impl Future<Output = Result<chunk::ChunkId, error::TensorFsError>> + Send;
+    fn get(&self, id: chunk::ChunkId) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
+    fn exists(&self, id: chunk::ChunkId) -> impl Future<Output = Result<bool, error::TensorFsError>> + Send;
+    fn read_range(&self, id: chunk::ChunkId, offset: u64, len: usize) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
 }
 
 pub struct FsCas {
@@ -21,9 +21,9 @@ pub struct FsCas {
 }
 
 impl Cas for FsCas {
-    async fn put(&self, bytes: Bytes) -> Result<types::ChunkId, error::TensorFsError> {
+    async fn put(&self, bytes: Bytes) -> Result<chunk::ChunkId, error::TensorFsError> {
         let hash = blake3::hash(&bytes);
-        let id = types::ChunkId::from_bytes(*hash.as_bytes());
+        let id = chunk::ChunkId::from_bytes(*hash.as_bytes());
 
         create_dir_all(&self.path).await?;
 
@@ -74,19 +74,19 @@ impl Cas for FsCas {
         }
     }
 
-    async fn get(&self, id: types::ChunkId) -> Result<Bytes, error::TensorFsError> {
+    async fn get(&self, id: chunk::ChunkId) -> Result<Bytes, error::TensorFsError> {
         let path = std::path::Path::new(&self.path).join(id.to_hex());
         let file = read(path).await?;
         Ok(Bytes::from(file))
     }
 
-    async fn exists(&self, id: types::ChunkId) -> Result<bool, error::TensorFsError> {
+    async fn exists(&self, id: chunk::ChunkId) -> Result<bool, error::TensorFsError> {
         let path = std::path::Path::new(&self.path).join(id.to_hex());
         let exists = try_exists(path).await?;
         Ok(exists)
     }
 
-    async fn read_range(&self, id: types::ChunkId, offset: u64, len: usize) -> Result<Bytes, error::TensorFsError> {
+    async fn read_range(&self, id: chunk::ChunkId, offset: u64, len: usize) -> Result<Bytes, error::TensorFsError> {
         if len == 0 {
             return Ok(Bytes::new());
         }
@@ -111,11 +111,11 @@ impl FsCas {
         Self { path }
     }
 
-    fn chunk_path(&self, id: &types::ChunkId) -> PathBuf {
+    fn chunk_path(&self, id: &chunk::ChunkId) -> PathBuf {
         Path::new(&self.path).join(id.to_hex())
     }
 
-    fn temp_chunk_path(&self, id: &types::ChunkId) -> PathBuf {
+    fn temp_chunk_path(&self, id: &chunk::ChunkId) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -171,7 +171,7 @@ mod tests {
         let dir = test_dir("exists");
         let cas = FsCas::new(dir.clone());
 
-        let missing_id = tensorfs::types::ChunkId::from_bytes(*blake3::hash(b"missing").as_bytes());
+        let missing_id = tensorfs::chunk::ChunkId::from_bytes(*blake3::hash(b"missing").as_bytes());
         assert!(!cas.exists(missing_id).await.unwrap());
 
         let id = cas.put(Bytes::from_static(b"present")).await.unwrap();

@@ -2,7 +2,7 @@ use std::io;
 
 use thiserror::Error;
 
-use crate::types;
+use crate::chunk;
 
 pub type Result<T> = std::result::Result<T, TensorFsError>;
 
@@ -15,7 +15,7 @@ pub enum TensorFsError {
     #[error("Invalid chunk_id length")]
     InvalidChunkIdLength,
     #[error("No chunk with id: {0}")]
-    ChunkNotFound(types::ChunkId),
+    ChunkNotFound(chunk::ChunkId),
     #[error("Invalid argument")]
     InvalidArgument,
 }
