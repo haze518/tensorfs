@@ -1,8 +1,8 @@
-use std::path::Path;
 use std::fs::read;
+use std::path::Path;
 use std::str;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{chunk::ChunkId, error};
 
@@ -51,9 +51,39 @@ impl Manifest {
     pub fn load(path: &Path) -> Result<Self, error::TensorFsError> {
         let data = read(path)?;
 
-        let manifest: Manifest = serde_json::from_slice(&data).map_err(|_| error::TensorFsError::ManifestReadError)?;
+        let manifest: Manifest =
+            serde_json::from_slice(&data).map_err(|_| error::TensorFsError::ManifestReadError)?;
+
+        manifest.validate()?;
 
         Ok(manifest)
+    }
+
+    fn validate(&self) -> Result<(), error::TensorFsError> {
+        for file in &self.files {
+            let mut prev_end = 0;
+            for segment in &file.segments {
+                if segment.len == 0 {
+                    return Err(error::TensorFsError::ManifestValidationError);
+                }
+                if segment.chunk_offset.checked_add(segment.len).is_none() {
+                    return Err(error::TensorFsError::ManifestValidationError);
+                }
+                if segment.file_offset.checked_add(segment.len).is_none() {
+                    return Err(error::TensorFsError::ManifestValidationError);
+                }
+
+                if segment.file_offset != prev_end {
+                    return Err(error::TensorFsError::ManifestValidationError);
+                }
+                prev_end += segment.len
+            }
+            if prev_end != file.size {
+                return Err(error::TensorFsError::ManifestValidationError);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -83,26 +113,24 @@ mod tests {
         Manifest {
             version: 1,
             source: "hf://meta-llama/Llama-3".to_string(),
-            files: vec![
-                File {
-                    path: "model-00001-of-00002.safetensors".to_string(),
-                    size: 8,
-                    segments: vec![
-                        Segment {
-                            chunk_id: test_chunk_id(1),
-                            file_offset: 0,
-                            chunk_offset: 0,
-                            len: 4,
-                        },
-                        Segment {
-                            chunk_id: test_chunk_id(2),
-                            file_offset: 4,
-                            chunk_offset: 0,
-                            len: 4,
-                        },
-                    ],
-                },
-            ],
+            files: vec![File {
+                path: "model-00001-of-00002.safetensors".to_string(),
+                size: 8,
+                segments: vec![
+                    Segment {
+                        chunk_id: test_chunk_id(1),
+                        file_offset: 0,
+                        chunk_offset: 0,
+                        len: 4,
+                    },
+                    Segment {
+                        chunk_id: test_chunk_id(2),
+                        file_offset: 4,
+                        chunk_offset: 0,
+                        len: 4,
+                    },
+                ],
+            }],
         }
     }
 
@@ -197,7 +225,11 @@ mod tests {
         assert_eq!(actual_file.size, expected_file.size);
         assert_eq!(actual_file.segments.len(), expected_file.segments.len());
 
-        for (actual, expected) in actual_file.segments.iter().zip(expected_file.segments.iter()) {
+        for (actual, expected) in actual_file
+            .segments
+            .iter()
+            .zip(expected_file.segments.iter())
+        {
             assert_eq!(actual.chunk_id, expected.chunk_id);
             assert_eq!(actual.file_offset, expected.file_offset);
             assert_eq!(actual.chunk_offset, expected.chunk_offset);
@@ -220,7 +252,10 @@ mod tests {
         assert_eq!(loaded.files.len(), manifest.files.len());
         assert_eq!(loaded.files[0].path, manifest.files[0].path);
         assert_eq!(loaded.files[0].size, manifest.files[0].size);
-        assert_eq!(loaded.files[0].segments.len(), manifest.files[0].segments.len());
+        assert_eq!(
+            loaded.files[0].segments.len(),
+            manifest.files[0].segments.len()
+        );
 
         let _ = fs::remove_file(path);
     }
@@ -245,6 +280,92 @@ mod tests {
         let err = Manifest::load(&path).unwrap_err();
 
         assert!(matches!(err, error::TensorFsError::ManifestReadError));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_path_returns_error_for_unsorted_segments() {
+        let path = temp_file_path("unsorted");
+        let mut manifest = sample_manifest();
+        manifest.files[0].segments = vec![
+            Segment {
+                chunk_id: test_chunk_id(2),
+                file_offset: 4,
+                chunk_offset: 0,
+                len: 4,
+            },
+            Segment {
+                chunk_id: test_chunk_id(1),
+                file_offset: 0,
+                chunk_offset: 0,
+                len: 4,
+            },
+        ];
+
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let err = Manifest::load(&path).unwrap_err();
+
+        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_path_returns_error_for_overlapping_segments() {
+        let path = temp_file_path("overlap");
+        let mut manifest = sample_manifest();
+        manifest.files[0].segments = vec![
+            Segment {
+                chunk_id: test_chunk_id(1),
+                file_offset: 0,
+                chunk_offset: 0,
+                len: 5,
+            },
+            Segment {
+                chunk_id: test_chunk_id(2),
+                file_offset: 4,
+                chunk_offset: 0,
+                len: 4,
+            },
+        ];
+
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let err = Manifest::load(&path).unwrap_err();
+
+        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_path_returns_error_for_segments_out_of_bounds() {
+        let path = temp_file_path("out-of-bounds");
+        let mut manifest = sample_manifest();
+        manifest.files[0].segments[1].len = 5;
+
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let err = Manifest::load(&path).unwrap_err();
+
+        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_path_returns_error_for_incorrect_offsets() {
+        let path = temp_file_path("incorrect-offsets");
+        let mut manifest = sample_manifest();
+        manifest.files[0].segments[0].chunk_offset = u64::MAX;
+
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let err = Manifest::load(&path).unwrap_err();
+
+        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
 
         let _ = fs::remove_file(path);
     }

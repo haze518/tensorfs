@@ -20,4 +20,6 @@ pub enum TensorFsError {
     InvalidArgument,
     #[error("Manifest read error")]
     ManifestReadError,
+    #[error("Manifest validation error")]
+    ManifestValidationError,
 }
