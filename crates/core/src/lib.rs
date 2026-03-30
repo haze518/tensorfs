@@ -1,6 +1,7 @@
 pub mod chunk;
 pub mod error;
 pub mod manifest;
+pub mod resolver;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

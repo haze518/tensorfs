@@ -22,4 +22,6 @@ pub enum TensorFsError {
     ManifestReadError,
     #[error("Manifest validation error")]
     ManifestValidationError,
+    #[error("Segment not found")]
+    SegmentNotFound,
 }

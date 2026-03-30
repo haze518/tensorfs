@@ -34,17 +34,17 @@ pub struct Manifest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct File {
-    path: String,
-    size: u64,
-    segments: Vec<Segment>,
+    pub(crate) path: String,
+    pub(crate) size: u64,
+    pub(crate) segments: Vec<Segment>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Segment {
-    chunk_id: ChunkId,
-    file_offset: u64,
-    chunk_offset: u64,
-    len: u64,
+    pub(crate) chunk_id: ChunkId,
+    pub(crate) file_offset: u64,
+    pub(crate) chunk_offset: u64,
+    pub(crate) len: u64,
 }
 
 impl Manifest {
