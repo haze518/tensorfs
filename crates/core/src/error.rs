@@ -4,8 +4,6 @@ use thiserror::Error;
 
 use crate::chunk;
 
-pub type Result<T> = std::result::Result<T, TensorFsError>;
-
 #[derive(Error, Debug)]
 pub enum TensorFsError {
     #[error(transparent)]
@@ -24,4 +22,8 @@ pub enum TensorFsError {
     ManifestValidationError,
     #[error("Segment not found")]
     SegmentNotFound,
+    #[error("Resolver out of bound")]
+    ResolverOutOfBound,
+    #[error("Incorrect read interval")]
+    IncorrectReadInterval,
 }
