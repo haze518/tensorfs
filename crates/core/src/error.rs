@@ -26,4 +26,22 @@ pub enum TensorFsError {
     ResolverOutOfBound,
     #[error("Incorrect read interval")]
     IncorrectReadInterval,
+    #[error("Safetensors incorrect header length")]
+    IncorrectSafetensorsLen,
+    #[error("Safetensors header read error")]
+    SafeTensorsReadError,
+    #[error("Too short for header len")]
+    TooShortForHeaderLen,
+    #[error("Header len overflow")]
+    HeaderLenOverflow,
+    #[error("Incomplete header")]
+    IncompleteHeader,
+    #[error("Invalid header json")]
+    InvalidHeaderJson,
+    #[error("Offset overflow")]
+    OffsetOverflow,
+    #[error("Invalid offset")]
+    InvalidOffsets,
+    #[error("Invalid tensor size")]
+    InvalidTensorSize,
 }
