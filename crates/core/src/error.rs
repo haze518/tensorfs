@@ -30,8 +30,6 @@ pub enum TensorFsError {
     IncorrectSafetensorsLen,
     #[error("Safetensors header read error")]
     SafeTensorsReadError,
-    #[error("Too short for header len")]
-    TooShortForHeaderLen,
     #[error("Header len overflow")]
     HeaderLenOverflow,
     #[error("Incomplete header")]
@@ -44,4 +42,18 @@ pub enum TensorFsError {
     InvalidOffsets,
     #[error("Invalid tensor size")]
     InvalidTensorSize,
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error("Bad request")]
+    BadRequest,
+    #[error("Invalid json")]
+    InvalidJson,
+    #[error("Forbidden")]
+    Forbidden,
+    #[error("Range not satisfiable")]
+    RangeNotSatisfiable,
+    #[error("Invalid response")]
+    InvalidResponse,
+    #[error("Not found")]
+    NotFound,
 }

@@ -8,7 +8,7 @@ license.workspace = true
 api = { path = "../api" }
 cas = { path = "../cas" }
 core = { path = "../core", package = "tensorfs"}
-read = { path = "../read" }
+fetch = { path = "../fetch" }
 
 tracing = "0.1"
 tracing-subscriber = "0.3"

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::TensorFsError;
 
-const SAFETENSORS_HEADER_LEN: usize = 8;
+pub const SAFETENSORS_HEADER_LEN: usize = 8;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Safetensor {
@@ -61,7 +61,7 @@ enum HeaderEntry {
 
 pub fn parse_header(bytes: &[u8]) -> Result<Vec<TensorMeta>, TensorFsError> {
     if bytes.len() < SAFETENSORS_HEADER_LEN {
-        return Err(TensorFsError::TooShortForHeaderLen);
+        return Err(TensorFsError::IncorrectSafetensorsLen);
     }
 
     let header_len_bytes: [u8; SAFETENSORS_HEADER_LEN] = bytes[0..SAFETENSORS_HEADER_LEN]
@@ -249,7 +249,7 @@ mod tests {
 
         let err = parse_header(&bytes).expect_err("should fail");
 
-        assert!(matches!(err, TensorFsError::TooShortForHeaderLen));
+        assert!(matches!(err, TensorFsError::IncorrectSafetensorsLen));
     }
 
     #[test]
