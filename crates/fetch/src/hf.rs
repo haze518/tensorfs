@@ -37,17 +37,16 @@ impl RemoteSource for HFClient {
             .map_err(|_| TensorFsError::BadRequest)?;
 
         let status = response.status();
-        let raw = match status.is_success() {
-            true => Ok(response),
-            false => match status {
-                StatusCode::NOT_FOUND => Err(TensorFsError::NotFound),
-                StatusCode::UNAUTHORIZED => Err(TensorFsError::Unauthorized),
-                StatusCode::FORBIDDEN => Err(TensorFsError::Forbidden),
-                _ => Err(TensorFsError::BadRequest),
-            },
-        }?;
+        if !status.is_success() {
+            match status {
+                StatusCode::NOT_FOUND => return Err(TensorFsError::NotFound),
+                StatusCode::UNAUTHORIZED => return Err(TensorFsError::Unauthorized),
+                StatusCode::FORBIDDEN => return Err(TensorFsError::Forbidden),
+                _ => return Err(TensorFsError::BadRequest),
+            }
+        }
 
-        let resp: ModelResponse = raw.json().await.map_err(|_| TensorFsError::InvalidJson)?;
+        let resp: ModelResponse = response.json().await.map_err(|_| TensorFsError::InvalidJson)?;
 
         let mut result = Vec::with_capacity(resp.siblings.len());
         for sib in resp.siblings {
@@ -81,7 +80,7 @@ impl RemoteSource for HFClient {
 
             result.push(RemoteFile {
                 path: sib.rfilename,
-                size: size,
+                size,
                 url,
             });
         }
