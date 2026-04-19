@@ -1,14 +1,9 @@
 use bytes::Bytes;
-use reqwest::{Client, RequestBuilder, StatusCode, Url};
+use reqwest::{Client, Method, RequestBuilder, StatusCode, Url};
 use serde::Deserialize;
 use tensorfs::error::TensorFsError;
 use tensorfs::safetensors::{SAFETENSORS_HEADER_LEN, TensorMeta, parse_header};
-
-pub struct RemoteFile {
-    pub path: String,
-    pub size: Option<u64>,
-    pub url: Url,
-}
+use tensorfs::source::{RemoteFile, RemoteSource};
 
 #[derive(Deserialize)]
 struct ModelResponse {
@@ -20,23 +15,6 @@ struct ModelResponse {
 struct Sibling {
     rfilename: String,
     size: Option<u64>,
-}
-
-pub trait RemoteSource: Send + Sync {
-    fn list_model_files(
-        &self,
-        model_id: &str,
-    ) -> impl Future<Output = Result<Vec<RemoteFile>, TensorFsError>> + Send;
-    fn fetch_range(
-        &self,
-        url: &Url,
-        offset: u64,
-        len: u64,
-    ) -> impl Future<Output = Result<Bytes, TensorFsError>> + Send;
-    fn fetch_safetensors_header(
-        &self,
-        url: &Url,
-    ) -> impl Future<Output = Result<Vec<TensorMeta>, TensorFsError>> + Send;
 }
 
 pub struct HFClient {
@@ -53,7 +31,7 @@ impl RemoteSource for HFClient {
             .join(&model)
             .map_err(|_| TensorFsError::InvalidArgument)?;
         let response = self
-            .build_request(&url)
+            .build_request(Method::GET, &url)
             .send()
             .await
             .map_err(|_| TensorFsError::BadRequest)?;
@@ -78,9 +56,32 @@ impl RemoteSource for HFClient {
                 .base_url
                 .join(&model_path)
                 .map_err(|_| TensorFsError::InvalidArgument)?;
+
+            let size = match sib.size {
+                Some(s) => s,
+                None => {
+                    let resp = self
+                        .build_request(Method::HEAD, &url)
+                        .send()
+                        .await
+                        .map_err(|_| TensorFsError::BadRequest)?;
+
+                    let status = resp.status();
+                    if !status.is_success() {
+                        return Err(TensorFsError::BadRequest);
+                    }
+
+                    resp.headers()
+                        .get(reqwest::header::CONTENT_LENGTH)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .ok_or(TensorFsError::InvalidResponse)?
+                }
+            };
+
             result.push(RemoteFile {
                 path: sib.rfilename,
-                size: sib.size,
+                size: size,
                 url,
             });
         }
@@ -98,7 +99,7 @@ impl RemoteSource for HFClient {
             .ok_or(TensorFsError::IncorrectReadInterval)?;
 
         let response = self
-            .build_request(url)
+            .build_request(Method::GET, url)
             .header("Range", format!("bytes={offset}-{end}"))
             .send()
             .await
@@ -156,7 +157,7 @@ impl RemoteSource for HFClient {
             .await?;
 
         if header.len() as u64 != header_len {
-            return Err(TensorFsError::IncorrectSafetensorsLen)
+            return Err(TensorFsError::IncorrectSafetensorsLen);
         }
 
         let mut buf = Vec::with_capacity(SAFETENSORS_HEADER_LEN + header.len());
@@ -176,8 +177,8 @@ impl HFClient {
         }
     }
 
-    fn build_request(&self, url: &Url) -> RequestBuilder {
-        let req = self.client.get(url.clone());
+    fn build_request(&self, method: Method, url: &Url) -> RequestBuilder {
+        let req = self.client.request(method, url.clone());
 
         if let Some(token) = &self.token {
             req.bearer_auth(token)

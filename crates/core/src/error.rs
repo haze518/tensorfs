@@ -56,4 +56,8 @@ pub enum TensorFsError {
     InvalidResponse,
     #[error("Not found")]
     NotFound,
+    #[error("Validation error")]
+    ValidationError,
+    #[error("Manifest write error")]
+    ManifestWriteError,
 }

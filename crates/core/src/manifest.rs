@@ -1,10 +1,13 @@
-use std::fs::read;
+use std::fs::{read, write};
 use std::path::Path;
 use std::str;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{chunk::ChunkId, error};
+use crate::{
+    chunk::{ChunkId, DEFAULT_CHUNK_ID},
+    error::TensorFsError,
+};
 
 /// Example JSON:
 /// {
@@ -27,9 +30,9 @@ use crate::{chunk::ChunkId, error};
 /// }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    version: u16,
-    source: String,
-    files: Vec<File>,
+    pub version: u16,
+    pub source: String,
+    pub files: Vec<File>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,42 +51,81 @@ pub struct Segment {
 }
 
 impl Manifest {
-    pub fn load(path: &Path) -> Result<Self, error::TensorFsError> {
+    pub fn new(model_id: &str, files: Vec<File>) -> Result<Self, TensorFsError> {
+        let manifest = Manifest {
+            version: 0,
+            source: format!("hf://{}", model_id),
+            files,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn load(path: &Path) -> Result<Self, TensorFsError> {
         let data = read(path)?;
 
         let manifest: Manifest =
-            serde_json::from_slice(&data).map_err(|_| error::TensorFsError::ManifestReadError)?;
+            serde_json::from_slice(&data).map_err(|_| TensorFsError::ManifestReadError)?;
 
         manifest.validate()?;
 
         Ok(manifest)
     }
 
-    fn validate(&self) -> Result<(), error::TensorFsError> {
+    pub fn save(&self, path: &Path) -> Result<(), TensorFsError> {
+        let json =
+            serde_json::to_vec_pretty(self).map_err(|_| TensorFsError::ManifestWriteError)?;
+
+        write(path, json)?;
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), TensorFsError> {
         for file in &self.files {
             let mut prev_end = 0;
             for segment in &file.segments {
                 if segment.len == 0 {
-                    return Err(error::TensorFsError::ManifestValidationError);
+                    return Err(TensorFsError::ManifestValidationError);
                 }
                 if segment.chunk_offset.checked_add(segment.len).is_none() {
-                    return Err(error::TensorFsError::ManifestValidationError);
+                    return Err(TensorFsError::ManifestValidationError);
                 }
                 if segment.file_offset.checked_add(segment.len).is_none() {
-                    return Err(error::TensorFsError::ManifestValidationError);
+                    return Err(TensorFsError::ManifestValidationError);
                 }
 
                 if segment.file_offset != prev_end {
-                    return Err(error::TensorFsError::ManifestValidationError);
+                    return Err(TensorFsError::ManifestValidationError);
                 }
                 prev_end += segment.len
             }
             if prev_end != file.size {
-                return Err(error::TensorFsError::ManifestValidationError);
+                return Err(TensorFsError::ManifestValidationError);
             }
         }
 
         Ok(())
+    }
+}
+
+impl File {
+    pub fn new(path: &str, size: u64, segments: Vec<Segment>) -> Self {
+        Self {
+            path: path.to_string(),
+            size,
+            segments,
+        }
+    }
+}
+
+impl Segment {
+    pub fn new(file_offset: u64, chunk_offset: u64, len: u64) -> Self {
+        return Self {
+            chunk_id: DEFAULT_CHUNK_ID,
+            file_offset,
+            chunk_offset,
+            len,
+        };
     }
 }
 
@@ -267,7 +309,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestReadError));
+        assert!(matches!(err, TensorFsError::ManifestReadError));
 
         let _ = fs::remove_file(path);
     }
@@ -279,7 +321,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestReadError));
+        assert!(matches!(err, TensorFsError::ManifestReadError));
 
         let _ = fs::remove_file(path);
     }
@@ -307,7 +349,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+        assert!(matches!(err, TensorFsError::ManifestValidationError));
 
         let _ = fs::remove_file(path);
     }
@@ -335,7 +377,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+        assert!(matches!(err, TensorFsError::ManifestValidationError));
 
         let _ = fs::remove_file(path);
     }
@@ -350,7 +392,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+        assert!(matches!(err, TensorFsError::ManifestValidationError));
 
         let _ = fs::remove_file(path);
     }
@@ -365,7 +407,7 @@ mod tests {
 
         let err = Manifest::load(&path).unwrap_err();
 
-        assert!(matches!(err, error::TensorFsError::ManifestValidationError));
+        assert!(matches!(err, TensorFsError::ManifestValidationError));
 
         let _ = fs::remove_file(path);
     }

@@ -13,11 +13,11 @@ pub struct Safetensor {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TensorMeta {
-    name: String,
-    dtype: Dtype,
-    shape: Vec<u64>,
-    offset: u64,
-    length: u64,
+    pub(crate) name: String,
+    pub(crate) dtype: Dtype,
+    pub(crate) shape: Vec<u64>,
+    pub(crate) offset: u64,
+    pub(crate) length: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, PartialEq, Eq)]

@@ -1,6 +1,7 @@
-use fetch::remote_source::{HFClient, RemoteSource};
+use fetch::hf::HFClient;
 use reqwest::Url;
 use serde_json::Value;
+use tensorfs::source::RemoteSource;
 
 fn make_hf_client() -> HFClient {
     HFClient::new(
