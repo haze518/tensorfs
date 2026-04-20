@@ -21,6 +21,7 @@ pub trait RemoteSource: Send + Sync {
     ) -> impl Future<Output = Result<Vec<TensorMeta>, TensorFsError>> + Send;
 }
 
+#[derive(Clone)]
 pub struct RemoteFile {
     pub path: String,
     pub size: u64,

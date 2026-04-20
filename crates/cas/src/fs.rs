@@ -3,31 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
+use tensorfs::cas::Cas;
 use tensorfs::chunk;
 use tensorfs::error;
 use tokio::fs::{OpenOptions, create_dir_all, read, remove_file, rename, try_exists};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-
-pub trait Cas: Send + Sync {
-    fn put(
-        &self,
-        bytes: Bytes,
-    ) -> impl Future<Output = Result<chunk::ChunkId, error::TensorFsError>> + Send;
-    fn get(
-        &self,
-        id: chunk::ChunkId,
-    ) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
-    fn exists(
-        &self,
-        id: chunk::ChunkId,
-    ) -> impl Future<Output = Result<bool, error::TensorFsError>> + Send;
-    fn read_range(
-        &self,
-        id: chunk::ChunkId,
-        offset: u64,
-        len: usize,
-    ) -> impl Future<Output = Result<Bytes, error::TensorFsError>> + Send;
-}
 
 pub struct FsCas {
     path: PathBuf,

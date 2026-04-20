@@ -4,10 +4,8 @@ use std::str;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    chunk::{ChunkId, DEFAULT_CHUNK_ID},
-    error::TensorFsError,
-};
+use crate::chunk::ChunkId;
+use crate::error::TensorFsError;
 
 /// Example JSON:
 /// {
@@ -37,17 +35,17 @@ pub struct Manifest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct File {
-    pub(crate) path: String,
-    pub(crate) size: u64,
-    pub(crate) segments: Vec<Segment>,
+    pub path: String,
+    pub size: u64,
+    pub segments: Vec<Segment>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Segment {
-    pub(crate) chunk_id: ChunkId,
-    pub(crate) file_offset: u64,
-    pub(crate) chunk_offset: u64,
-    pub(crate) len: u64,
+    pub chunk_id: ChunkId,
+    pub file_offset: u64,
+    pub chunk_offset: u64,
+    pub len: u64,
 }
 
 impl Manifest {
@@ -121,7 +119,7 @@ impl File {
 impl Segment {
     pub fn new(file_offset: u64, chunk_offset: u64, len: u64) -> Self {
         return Self {
-            chunk_id: DEFAULT_CHUNK_ID,
+            chunk_id: ChunkId::default(),
             file_offset,
             chunk_offset,
             len,

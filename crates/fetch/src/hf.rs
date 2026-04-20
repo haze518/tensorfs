@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tensorfs::error::TensorFsError;
 use tensorfs::safetensors::{SAFETENSORS_HEADER_LEN, TensorMeta, parse_header};
 use tensorfs::source::{RemoteFile, RemoteSource};
+use tracing::{info, trace};
 
 #[derive(Deserialize)]
 struct ModelResponse {
@@ -30,6 +31,7 @@ impl RemoteSource for HFClient {
             .base_url
             .join(&model)
             .map_err(|_| TensorFsError::InvalidArgument)?;
+        info!(model_id = %model_id, url = %url, "listing model files");
         let response = self
             .build_request(Method::GET, &url)
             .send()
@@ -46,7 +48,10 @@ impl RemoteSource for HFClient {
             }
         }
 
-        let resp: ModelResponse = response.json().await.map_err(|_| TensorFsError::InvalidJson)?;
+        let resp: ModelResponse = response
+            .json()
+            .await
+            .map_err(|_| TensorFsError::InvalidJson)?;
 
         let mut result = Vec::with_capacity(resp.siblings.len());
         for sib in resp.siblings {
@@ -85,6 +90,11 @@ impl RemoteSource for HFClient {
             });
         }
 
+        info!(
+            model_id = %model_id,
+            files = result.len(),
+            "listed model files"
+        );
         Ok(result)
     }
 
@@ -97,6 +107,13 @@ impl RemoteSource for HFClient {
             .checked_add(len - 1)
             .ok_or(TensorFsError::IncorrectReadInterval)?;
 
+        trace!(
+            url = %url,
+            offset,
+            len,
+            end,
+            "fetching remote byte range"
+        );
         let response = self
             .build_request(Method::GET, url)
             .header("Range", format!("bytes={offset}-{end}"))
@@ -137,6 +154,7 @@ impl RemoteSource for HFClient {
     }
 
     async fn fetch_safetensors_header(&self, url: &Url) -> Result<Vec<TensorMeta>, TensorFsError> {
+        info!(url = %url, "fetching safetensors header");
         let prefix = self
             .fetch_range(&url, 0, SAFETENSORS_HEADER_LEN as u64)
             .await?;
@@ -163,7 +181,14 @@ impl RemoteSource for HFClient {
         buf.extend_from_slice(&prefix);
         buf.extend_from_slice(&header);
 
-        parse_header(&buf)
+        let tensors = parse_header(&buf)?;
+        info!(
+            url = %url,
+            tensors = tensors.len(),
+            "fetched safetensors header"
+        );
+
+        Ok(tensors)
     }
 }
 

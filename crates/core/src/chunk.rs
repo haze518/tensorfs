@@ -1,12 +1,12 @@
 use serde::de::Error as DeError;
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_CHUNK_ID: ChunkId = ChunkId([0; 32]);
-
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ChunkId([u8; 32]);
 
 impl ChunkId {
+    pub const ZERO: Self = Self([0; 32]);
+
     pub fn to_hex(&self) -> String {
         let mut s = String::new();
         let table = b"0123456789abcdef";
@@ -23,6 +23,16 @@ impl ChunkId {
 
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::ZERO
+    }
+}
+
+impl Default for ChunkId {
+    fn default() -> Self {
+        Self::ZERO
     }
 }
 

@@ -4,8 +4,8 @@ use crate::safetensors::TensorMeta;
 use crate::source::RemoteFile;
 
 pub struct ServiceFileLayout {
-    file: RemoteFile,
-    tensors: Option<Vec<TensorMeta>>,
+    pub file: RemoteFile,
+    pub tensors: Option<Vec<TensorMeta>>,
 }
 
 pub fn build_manifest(
