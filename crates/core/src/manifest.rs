@@ -1,4 +1,5 @@
 use std::fs::{read, write};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::str;
 
@@ -31,6 +32,7 @@ pub struct Manifest {
     pub version: u16,
     pub source: String,
     pub files: Vec<File>,
+    pub revision: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,18 +51,27 @@ pub struct Segment {
 }
 
 impl Manifest {
-    pub fn new(model_id: &str, files: Vec<File>) -> Result<Self, TensorFsError> {
+    pub fn new(model_id: &str, revision: &str, files: Vec<File>) -> Result<Self, TensorFsError> {
         let manifest = Manifest {
             version: 0,
             source: format!("hf://{}", model_id),
             files,
+            revision: revision.to_string(),
         };
         manifest.validate()?;
         Ok(manifest)
     }
 
     pub fn load(path: &Path) -> Result<Self, TensorFsError> {
-        let data = read(path)?;
+        let data = match read(path) {
+            Ok(data) => data,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(TensorFsError::NotFound);
+            }
+            Err(e) => {
+                return Err(TensorFsError::Io(e));
+            }
+        };
 
         let manifest: Manifest =
             serde_json::from_slice(&data).map_err(|_| TensorFsError::ManifestReadError)?;
@@ -153,6 +164,7 @@ mod tests {
         Manifest {
             version: 1,
             source: "hf://meta-llama/Llama-3".to_string(),
+            revision: "test-revision".to_string(),
             files: vec![File {
                 path: "model-00001-of-00002.safetensors".to_string(),
                 size: 8,
@@ -198,6 +210,7 @@ mod tests {
             r#"{{
                 "version": 1,
                 "source": "hf://meta-llama/Llama-3",
+                "revision": "test-revision",
                 "files": [
                     {{
                         "path": "model-00001-of-00002.safetensors",
@@ -227,6 +240,7 @@ mod tests {
 
         assert_eq!(manifest.version, 1);
         assert_eq!(manifest.source, "hf://meta-llama/Llama-3");
+        assert_eq!(manifest.revision, "test-revision");
         assert_eq!(manifest.files.len(), 1);
 
         let file = &manifest.files[0];
@@ -256,6 +270,7 @@ mod tests {
 
         assert_eq!(decoded.version, manifest.version);
         assert_eq!(decoded.source, manifest.source);
+        assert_eq!(decoded.revision, manifest.revision);
         assert_eq!(decoded.files.len(), manifest.files.len());
 
         let expected_file = &manifest.files[0];
@@ -289,6 +304,7 @@ mod tests {
 
         assert_eq!(loaded.version, manifest.version);
         assert_eq!(loaded.source, manifest.source);
+        assert_eq!(loaded.revision, manifest.revision);
         assert_eq!(loaded.files.len(), manifest.files.len());
         assert_eq!(loaded.files[0].path, manifest.files[0].path);
         assert_eq!(loaded.files[0].size, manifest.files[0].size);

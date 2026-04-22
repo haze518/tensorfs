@@ -8,7 +8,7 @@ use reqwest::Url;
 use tensorfs::cas::Cas;
 use tensorfs::error::TensorFsError;
 use tensorfs::safetensors::{TensorMeta, parse_header};
-use tensorfs::source::{RemoteFile, RemoteSource};
+use tensorfs::source::{RemoteFile, RemoteSnapshot, RemoteSource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RangeCall {
@@ -51,8 +51,12 @@ impl FakeRemote {
 }
 
 impl RemoteSource for FakeRemote {
-    async fn list_model_files(&self, _model_id: &str) -> Result<Vec<RemoteFile>, TensorFsError> {
-        Ok(self
+    async fn get_snapshot(
+        &self,
+        model_id: &str,
+        revision: Option<&str>,
+    ) -> Result<RemoteSnapshot, TensorFsError> {
+        let files = self
             .files
             .iter()
             .map(|(path, bytes)| RemoteFile {
@@ -60,7 +64,13 @@ impl RemoteSource for FakeRemote {
                 size: bytes.len() as u64,
                 url: Self::url(path),
             })
-            .collect())
+            .collect();
+
+        Ok(RemoteSnapshot {
+            id: model_id.to_string(),
+            revision: revision.unwrap_or("test-revision").to_string(),
+            files,
+        })
     }
 
     async fn fetch_range(&self, url: &Url, offset: u64, len: u64) -> Result<Bytes, TensorFsError> {
@@ -120,7 +130,8 @@ async fn model_importer_downloads_ranges_into_cas() {
     let storage = FsCas::new(cas_dir.clone());
     let importer = ModelImporter::new(remote.clone(), storage);
 
-    let manifest = importer.download("Qwen/tiny-test").await.unwrap();
+    let snapshot = importer.snapshot("Qwen/tiny-test", None).await.unwrap();
+    let manifest = importer.download(snapshot, |_| Ok(())).await.unwrap();
 
     assert_eq!(remote.header_calls(), vec!["weights.safetensors"]);
     assert!(

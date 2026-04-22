@@ -10,6 +10,7 @@ pub struct ServiceFileLayout {
 
 pub fn build_manifest(
     model_id: &str,
+    revision: &str,
     source_files: Vec<ServiceFileLayout>,
 ) -> Result<Manifest, TensorFsError> {
     let mut files: Vec<File> = Vec::with_capacity(source_files.len());
@@ -37,7 +38,7 @@ pub fn build_manifest(
         }
     }
 
-    Manifest::new(model_id, files)
+    Manifest::new(model_id, revision, files)
 }
 
 #[cfg(test)]
@@ -47,6 +48,8 @@ mod tests {
     use crate::safetensors::Dtype;
     use std::time::{SystemTime, UNIX_EPOCH};
     use url::Url;
+
+    const TEST_REVISION: &str = "test-revision";
 
     fn remote_file(path: &str, size: u64) -> RemoteFile {
         RemoteFile {
@@ -93,10 +96,12 @@ mod tests {
     fn builds_manifest_for_plain_file() {
         let manifest = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout("plain.bin", 128, None)],
         )
         .unwrap();
 
+        assert_eq!(manifest.revision, TEST_REVISION);
         assert_eq!(manifest.files.len(), 1);
 
         let file = &manifest.files[0];
@@ -112,6 +117,7 @@ mod tests {
     fn builds_manifest_for_safetensors_with_header_segment() {
         let manifest = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout(
                 "model.safetensors",
                 200,
@@ -140,6 +146,7 @@ mod tests {
     fn builds_manifest_for_safetensors_without_header_segment() {
         let manifest = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout(
                 "model.safetensors",
                 100,
@@ -164,6 +171,7 @@ mod tests {
     fn returns_error_for_empty_tensors() {
         let err = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout("empty.safetensors", 10, Some(vec![]))],
         )
         .unwrap_err();
@@ -175,6 +183,7 @@ mod tests {
     fn returns_error_for_gap_between_tensors() {
         let err = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout(
                 "gapped.safetensors",
                 250,
@@ -191,6 +200,7 @@ mod tests {
         let path = temp_file_path("round-trip");
         let manifest = build_manifest(
             "org/model",
+            TEST_REVISION,
             vec![service_file_layout(
                 "model.safetensors",
                 200,
@@ -205,6 +215,7 @@ mod tests {
 
         assert_eq!(loaded.version, manifest.version);
         assert_eq!(loaded.source, manifest.source);
+        assert_eq!(loaded.revision, manifest.revision);
         assert_eq!(loaded.files.len(), manifest.files.len());
         assert_eq!(loaded.files[0].path, manifest.files[0].path);
         assert_eq!(loaded.files[0].size, manifest.files[0].size);

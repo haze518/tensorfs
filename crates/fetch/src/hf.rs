@@ -3,11 +3,12 @@ use reqwest::{Client, Method, RequestBuilder, StatusCode, Url};
 use serde::Deserialize;
 use tensorfs::error::TensorFsError;
 use tensorfs::safetensors::{SAFETENSORS_HEADER_LEN, TensorMeta, parse_header};
-use tensorfs::source::{RemoteFile, RemoteSource};
+use tensorfs::source::{RemoteFile, RemoteSnapshot, RemoteSource};
 use tracing::{info, trace};
 
 #[derive(Deserialize)]
 struct ModelResponse {
+    id: String,
     siblings: Vec<Sibling>,
     sha: String,
 }
@@ -25,8 +26,16 @@ pub struct HFClient {
 }
 
 impl RemoteSource for HFClient {
-    async fn list_model_files(&self, model_id: &str) -> Result<Vec<RemoteFile>, TensorFsError> {
-        let model = format!("api/models/{model_id}");
+    async fn get_snapshot(
+        &self,
+        model_id: &str,
+        revision: Option<&str>,
+    ) -> Result<RemoteSnapshot, TensorFsError> {
+        let model = match revision {
+            Some(revision) => format!("api/models/{model_id}/revision/{revision}"),
+            None => format!("api/models/{model_id}"),
+        };
+
         let url = self
             .base_url
             .join(&model)
@@ -48,14 +57,17 @@ impl RemoteSource for HFClient {
             }
         }
 
-        let resp: ModelResponse = response
+        let model_response: ModelResponse = response
             .json()
             .await
             .map_err(|_| TensorFsError::InvalidJson)?;
 
-        let mut result = Vec::with_capacity(resp.siblings.len());
-        for sib in resp.siblings {
-            let model_path = format!("{model_id}/resolve/{}/{}", &resp.sha, &sib.rfilename);
+        let mut files = Vec::with_capacity(model_response.siblings.len());
+        for sib in model_response.siblings {
+            let model_path = format!(
+                "{model_id}/resolve/{}/{}",
+                &model_response.sha, &sib.rfilename
+            );
             let url = self
                 .base_url
                 .join(&model_path)
@@ -83,7 +95,7 @@ impl RemoteSource for HFClient {
                 }
             };
 
-            result.push(RemoteFile {
+            files.push(RemoteFile {
                 path: sib.rfilename,
                 size,
                 url,
@@ -92,10 +104,16 @@ impl RemoteSource for HFClient {
 
         info!(
             model_id = %model_id,
-            files = result.len(),
+            revision = %model_response.sha,
+            files = files.len(),
             "listed model files"
         );
-        Ok(result)
+
+        Ok(RemoteSnapshot {
+            id: model_response.id,
+            revision: model_response.sha,
+            files: files,
+        })
     }
 
     async fn fetch_range(&self, url: &Url, offset: u64, len: u64) -> Result<Bytes, TensorFsError> {

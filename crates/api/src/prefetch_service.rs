@@ -27,14 +27,27 @@ impl<R: RemoteSource, C: Cas> PrefetchService<R, C> {
             "prefetch service started"
         );
 
-        let manifest = match Manifest::load(&path) {
-            Ok(manifest) => self.importer.resume(model_id, manifest).await,
-            Err(_) => self.importer.download(model_id).await,
-        }?;
-
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+
+        let on_progress =
+            |manifest: &Manifest| -> Result<(), TensorFsError> { manifest.save(&path) };
+
+        let manifest = match Manifest::load(&path) {
+            Ok(manifest) => {
+                let snapshot = self
+                    .importer
+                    .snapshot(model_id, Some(&manifest.revision))
+                    .await?;
+                self.importer.resume(manifest, snapshot, on_progress).await
+            }
+            Err(TensorFsError::NotFound) => {
+                let snapshot = self.importer.snapshot(model_id, None).await?;
+                self.importer.download(snapshot, on_progress).await
+            }
+            Err(err) => return Err(err),
+        }?;
 
         tracing::info!(
             model_id = %model_id,

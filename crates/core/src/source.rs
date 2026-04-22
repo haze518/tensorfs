@@ -5,10 +5,11 @@ use crate::error::TensorFsError;
 use crate::safetensors::TensorMeta;
 
 pub trait RemoteSource: Send + Sync {
-    fn list_model_files(
+    fn get_snapshot(
         &self,
         model_id: &str,
-    ) -> impl Future<Output = Result<Vec<RemoteFile>, TensorFsError>> + Send;
+        revision: Option<&str>,
+    ) -> impl Future<Output = Result<RemoteSnapshot, TensorFsError>> + Send;
     fn fetch_range(
         &self,
         url: &Url,
@@ -26,4 +27,11 @@ pub struct RemoteFile {
     pub path: String,
     pub size: u64,
     pub url: Url,
+}
+
+#[derive(Clone)]
+pub struct RemoteSnapshot {
+    pub id: String,
+    pub revision: String,
+    pub files: Vec<RemoteFile>,
 }

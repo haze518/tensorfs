@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use api::prefetch_service::PrefetchService;
 use bytes::Bytes;
@@ -10,18 +11,37 @@ use core::chunk::ChunkId;
 use core::error::TensorFsError;
 use core::manifest::Manifest;
 use core::safetensors::{TensorMeta, parse_header};
-use core::source::{RemoteFile, RemoteSource};
+use core::source::{RemoteFile, RemoteSnapshot, RemoteSource};
 use fetch::model_importert::ModelImporter;
 use url::Url;
 
 #[derive(Clone)]
 struct FakeRemote {
     files: BTreeMap<String, Vec<u8>>,
+    range_calls: Arc<Mutex<Vec<RangeCall>>>,
+    fail_after_successful_ranges: Arc<Mutex<Option<usize>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RangeCall {
+    path: String,
+    offset: u64,
+    len: u64,
 }
 
 impl FakeRemote {
     fn new(files: BTreeMap<String, Vec<u8>>) -> Self {
-        Self { files }
+        Self {
+            files,
+            range_calls: Arc::new(Mutex::new(Vec::new())),
+            fail_after_successful_ranges: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn with_fail_after_successful_ranges(files: BTreeMap<String, Vec<u8>>, limit: usize) -> Self {
+        let remote = Self::new(files);
+        *remote.fail_after_successful_ranges.lock().unwrap() = Some(limit);
+        remote
     }
 
     fn url(path: &str) -> Url {
@@ -31,11 +51,19 @@ impl FakeRemote {
     fn path(url: &Url) -> String {
         url.path().trim_start_matches('/').to_string()
     }
+
+    fn range_calls(&self) -> Vec<RangeCall> {
+        self.range_calls.lock().unwrap().clone()
+    }
 }
 
 impl RemoteSource for FakeRemote {
-    async fn list_model_files(&self, _model_id: &str) -> Result<Vec<RemoteFile>, TensorFsError> {
-        Ok(self
+    async fn get_snapshot(
+        &self,
+        model_id: &str,
+        revision: Option<&str>,
+    ) -> Result<RemoteSnapshot, TensorFsError> {
+        let files = self
             .files
             .iter()
             .map(|(path, bytes)| RemoteFile {
@@ -43,11 +71,26 @@ impl RemoteSource for FakeRemote {
                 size: bytes.len() as u64,
                 url: Self::url(path),
             })
-            .collect())
+            .collect();
+
+        Ok(RemoteSnapshot {
+            id: model_id.to_string(),
+            revision: revision.unwrap_or("test-revision").to_string(),
+            files,
+        })
     }
 
     async fn fetch_range(&self, url: &Url, offset: u64, len: u64) -> Result<Bytes, TensorFsError> {
         let path = Self::path(url);
+
+        {
+            let range_calls = self.range_calls.lock().unwrap();
+            let limit = *self.fail_after_successful_ranges.lock().unwrap();
+            if limit.is_some_and(|limit| range_calls.len() >= limit) {
+                return Err(TensorFsError::InvalidResponse);
+            }
+        }
+
         let file = self.files.get(&path).ok_or(TensorFsError::NotFound)?;
         let start = usize::try_from(offset).map_err(|_| TensorFsError::InvalidArgument)?;
         let len = usize::try_from(len).map_err(|_| TensorFsError::InvalidArgument)?;
@@ -55,6 +98,12 @@ impl RemoteSource for FakeRemote {
             .checked_add(len)
             .ok_or(TensorFsError::InvalidArgument)?;
         let range = file.get(start..end).ok_or(TensorFsError::InvalidArgument)?;
+
+        self.range_calls.lock().unwrap().push(RangeCall {
+            path,
+            offset,
+            len: len as u64,
+        });
 
         Ok(Bytes::copy_from_slice(range))
     }
@@ -92,7 +141,14 @@ fn make_service(
     cas_dir: &Path,
     manifest_dir: &Path,
 ) -> PrefetchService<FakeRemote, FsCas> {
-    let remote = FakeRemote::new(files);
+    make_service_with_remote(FakeRemote::new(files), cas_dir, manifest_dir)
+}
+
+fn make_service_with_remote(
+    remote: FakeRemote,
+    cas_dir: &Path,
+    manifest_dir: &Path,
+) -> PrefetchService<FakeRemote, FsCas> {
     let storage = FsCas::new(cas_dir.to_path_buf());
     let importer = ModelImporter::new(remote, storage);
 
@@ -153,6 +209,19 @@ fn count_cas_chunks(cas_dir: &Path) -> usize {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
         .count()
+}
+
+fn count_present_segments(manifest: &Manifest) -> usize {
+    manifest
+        .files
+        .iter()
+        .flat_map(|file| &file.segments)
+        .filter(|segment| !segment.chunk_id.is_empty())
+        .count()
+}
+
+fn count_segments(manifest: &Manifest) -> usize {
+    manifest.files.iter().map(|file| file.segments.len()).sum()
 }
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -238,6 +307,42 @@ fn prefetch_repairs_missing_cas_chunk() {
         assert!(deleted_chunk_path.exists());
         assert_eq!(manifest_signature(&first), manifest_signature(&repaired));
         assert_manifest_reconstructs_files(&repaired, &files, &cas_dir).await;
+    });
+}
+
+#[test]
+fn prefetch_resumes_from_progress_manifest_after_interrupted_download() {
+    block_on(async {
+        let temp = tempfile::tempdir().unwrap();
+        let cas_dir = temp.path().join("cas");
+        let manifest_dir = temp.path().join("manifests");
+        let files = fake_files();
+        let failing_remote = FakeRemote::with_fail_after_successful_ranges(files.clone(), 1);
+        let service = make_service_with_remote(failing_remote.clone(), &cas_dir, &manifest_dir);
+
+        let err = service.prefetch("Qwen/tiny-test").await.unwrap_err();
+
+        assert!(matches!(err, TensorFsError::InvalidResponse));
+        let initial_calls = failing_remote.range_calls();
+        assert_eq!(initial_calls.len(), 1);
+
+        let saved_path = manifest_dir.join("Qwen/tiny-test");
+        assert!(saved_path.exists());
+        let partial = Manifest::load(&saved_path).unwrap();
+        assert_eq!(count_present_segments(&partial), 1);
+
+        let resume_remote = FakeRemote::new(files.clone());
+        let service = make_service_with_remote(resume_remote.clone(), &cas_dir, &manifest_dir);
+
+        let resumed = service.prefetch("Qwen/tiny-test").await.unwrap();
+
+        let resume_calls = resume_remote.range_calls();
+        assert_eq!(resume_calls.len(), count_segments(&resumed) - 1);
+        assert!(!resume_calls.iter().any(|call| call == &initial_calls[0]));
+
+        let saved = Manifest::load(&saved_path).unwrap();
+        assert_eq!(manifest_signature(&saved), manifest_signature(&resumed));
+        assert_manifest_reconstructs_files(&resumed, &files, &cas_dir).await;
     });
 }
 
