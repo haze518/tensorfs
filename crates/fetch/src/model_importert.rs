@@ -18,7 +18,10 @@ impl<R: RemoteSource, C: Cas> ModelImporter<R, C> {
         Self { client, storage }
     }
 
-    pub async fn download(&self, model_id: &str) -> Result<Manifest, TensorFsError> {
+    pub async fn download<F>(&self, model_id: &str, mut on_progress: F) -> Result<Manifest, TensorFsError>
+    where
+        F: FnMut(&Manifest) -> Result<(), TensorFsError>
+    {
         let files = self.client.list_model_files(model_id).await?;
         let mut sfl = Vec::new();
         let mut file_url = HashMap::new();
@@ -52,8 +55,12 @@ impl<R: RemoteSource, C: Cas> ModelImporter<R, C> {
                     .await?;
 
                 let chunk_id = self.storage.put(bytes).await?;
-                segment.chunk_id = chunk_id;
+                {
+                    let segment = &mut manifest.files[file_idx].segments[segment_idx];
+                    segment.chunk_id = chunk_id;
+                }
 
+                on_progress(&manifest)?;
                 done += 1;
 
                 info!(
