@@ -15,13 +15,14 @@ fn make_hf_client() -> HFClient {
 async fn hf_happy_path_lists_files_and_reads_safetensors_header() {
     let client = make_hf_client();
 
-    let files = client
-        .list_model_files("Qwen/Qwen2.5-0.5B")
+    let snapshot = client
+        .get_snapshot("Qwen/Qwen2.5-0.5B", None)
         .await
         .expect("model files should be listed");
-    assert!(!files.is_empty(), "expected non-empty file list");
+    assert!(!snapshot.files.is_empty(), "expected non-empty file list");
 
-    let safetensors = files
+    let safetensors = snapshot
+        .files
         .iter()
         .find(|file| file.path.ends_with(".safetensors"))
         .expect("expected at least one .safetensors file");
