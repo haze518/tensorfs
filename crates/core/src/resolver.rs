@@ -4,15 +4,15 @@ use crate::manifest::{File, Segment};
 
 #[derive(Debug)]
 pub struct ResolvedSlice {
-    chunk_id: ChunkId,
-    chunk_offset: u64,
-    len: u64,
+    pub chunk_id: ChunkId,
+    pub chunk_offset: u64,
+    pub len: u64,
 }
 
 pub struct Resolver {}
 
 impl Resolver {
-    fn resolve(
+    pub fn resolve(
         &self,
         file: &File,
         offset: u64,

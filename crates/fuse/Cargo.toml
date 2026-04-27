@@ -1,0 +1,11 @@
+[package]
+name = "fuse"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+fuser = { version = "0.17.0", features = ["experimental"] }
+libc = "0.2.186"
+tensorfs = { path = "../core" }

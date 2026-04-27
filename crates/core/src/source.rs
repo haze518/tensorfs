@@ -4,7 +4,7 @@ use url::Url;
 use crate::error::TensorFsError;
 use crate::safetensors::TensorMeta;
 
-pub trait RemoteSource: Send + Sync {
+pub trait RemoteSource: Send + Sync + 'static {
     fn get_snapshot(
         &self,
         model_id: &str,
